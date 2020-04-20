@@ -1,10 +1,10 @@
 
 
 ################################################################################################
+#																						   #
 #																							   #
-#																							   #
-#    Liste de l'ensemble des commandes utilisées au cours de la partie Hadoop du projet        #
-#               Geoffroy Blondel - Certificat Data Science - Dauphine 2018					   #
+#    Liste de l'ensemble des commandes utilisées au cours de la partie Hadoop du projet        
+#               Geoffroy Blondel - Certificat Data Science - Dauphine 2018					   
 #               																			   #
 #               																			   #
 ################################################################################################
@@ -16,10 +16,10 @@
 ______________________________________Commandes utiles avant de commencer:
 
 # Connection au cluster
-ssh -i "/home/jojo/Documents/Data Science/big data/TP2/id_rsa_user214"  -p 993 user214@www.lamsade.dauphine.fr
+ssh -i "/home/jojo/Documents/Data Science/big data/TP2/id_rsa_user214"  -p 993 user214@xxxxxxx
 
 # Envoyer les données via dropbox (avec le lien généré dans dropbox)
-wget https://www.dropbox.com/s/z6jzpqhiq02cfky/pr_10k.csv
+wget https://www.dropbox.com/s/xxx/pr_10k.csv
 
 # Envoyer des données du serveur à dropbox (utilisation du script dropbox_uploader.sh)
 ./dropbox_uploader.sh upload /home/cluster/user214/projet/pr_10k.csv data_science/
