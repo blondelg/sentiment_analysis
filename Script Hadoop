@@ -1,0 +1,541 @@
+
+
+################################################################################################
+#																							   #
+#																							   #
+#    Liste de l'ensemble des commandes utilisées au cours de la partie Hadoop du projet        #
+#               Geoffroy Blondel - Certificat Data Science - Dauphine 2018					   #
+#               																			   #
+#               																			   #
+################################################################################################
+
+
+
+
+
+______________________________________Commandes utiles avant de commencer:
+
+# Connection au cluster
+ssh -i "/home/jojo/Documents/Data Science/big data/TP2/id_rsa_user214"  -p 993 user214@www.lamsade.dauphine.fr
+
+# Envoyer les données via dropbox (avec le lien généré dans dropbox)
+wget https://www.dropbox.com/s/z6jzpqhiq02cfky/pr_10k.csv
+
+# Envoyer des données du serveur à dropbox (utilisation du script dropbox_uploader.sh)
+./dropbox_uploader.sh upload /home/cluster/user214/projet/pr_10k.csv data_science/
+
+# Lire les éléments d'un répertoire Hadoop:
+hadoop fs -ls <répertoire>
+
+# Supprimer les éléments d'unr épertoire
+hadoop fs -rm -r <répertoire>
+
+# Commande utile pour exporter un csv
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cluster/user214/projet
+' row format delimited fields terminated by ',' select * from hugetable;
+
+
+
+
+
+________________________________________Partie 2 - Passage à l'échelle
+
+	# Lancer hive
+
+hive
+
+	# Créer une premiere table temporaire
+
+CREATE TABLE IF NOT EXISTS temp(
+title STRING,
+review STRING,
+sentiment STRING)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\;'
+STORED AS TEXTFILE
+tblproperties ("skip.header.line.count"="1");
+
+
+	# Charger les donnees (le fichier d'import a été copié dans un répertoire du cluster avec un wget)
+
+LOAD DATA LOCAL INPATH "/home/cluster/user214/projet/pr_10k.csv"
+OVERWRITE INTO TABLE temp;
+
+	# Créer une seconde table
+
+CREATE TABLE IF NOT EXISTS data
+AS
+select
+row_number() over () as id,
+title,
+review,
+sentiment
+from temp;
+
+
+	# 1 Créer la tables "pos_rev" des commentaires positifs en supprimant les commentaires vides
+
+CREATE TABLE IF NOT EXISTS pos_rev
+AS
+SELECT
+row_number() over () as id,
+title,
+review,
+"pos" as sentiment
+FROM temp
+WHERE sentiment = "positive"
+AND review <> "";
+
+
+	# 2 Créer la tables "neg_rev" des commentaires positifs en supprimant les commentaires vides
+
+CREATE TABLE IF NOT EXISTS neg_rev
+AS
+SELECT
+row_number() over () AS id,
+title,
+review,
+"pos" as sentiment
+FROM temp
+WHERE sentiment = "negative"
+AND review <> "";
+
+
+	# 4 Créer la matrice termes documents en map reduce
+
+ #rendre executables les scripts:
+
+chmod +x map.py
+chmod +x red.py
+hadoop fs
+hadoop fs -ls
+
+	# creer le repertoire input:
+hadoop fs -mkdir /user/user214/input_p
+
+	#creer le repertoire d'output:
+hadoop fs -mkdir /user/user214/output_p
+
+	#transferer le fichier input:
+hadoop fs -put /home/cluster/user214/projet/test2.txt /user/user214/input_p
+
+	#verifier que le fichier input est bien present:
+hadoop fs -ls /user/user214/input_p
+hadoop fs -cat /user/user214/input_p/test2.txt
+
+
+	# Afficher l'ensemble des tables dans Hive:
+SHOW TABLES;
+
+
+	# Créer les tables :
+
+g_learn_pos > 1475 records
+g_learn_neg > 1475 records
+g_test_pos  > 632 records
+g_test_neg  > 632 records
+
+# Table qui contiendra les commentaires positifs de l'ensemble d'apprentissage
+CREATE TABLE IF NOT EXISTS g_learn_pos
+AS
+SELECT
+row_number() over () AS id,
+review,
+"p" as sentiment
+FROM pos_rev
+WHERE id between 1 AND 1475;
+
+# Table qui contiendra les commentaires negatifs de l'ensemble d'apprentissage
+CREATE TABLE IF NOT EXISTS g_learn_neg
+AS
+SELECT
+row_number() over () AS id,
+review,
+"n" as sentiment
+FROM neg_rev
+WHERE id between 1 AND 1475;
+
+# Table qui contiendra les commentaires positifs de l'ensemble de test
+CREATE TABLE IF NOT EXISTS g_test_pos
+AS
+SELECT
+row_number() over () AS id,
+review,
+"p" as sentiment
+FROM pos_rev
+WHERE id between 1476 AND 2107;
+
+# Table qui contiendra les commentaires negatifs de l'ensemble de test
+CREATE TABLE IF NOT EXISTS g_test_neg
+AS
+SELECT
+row_number() over () AS id,
+review,
+"n" as sentiment
+FROM neg_rev
+WHERE id between 1476 AND 2107;
+
+	# Export des commentaires apprentissage positifs en deux sous fichiers qui seront consommés pas Hadoop pour creer les deux MTD
+
+learn_pos.csv
+learn_neg.csv
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cluster/user214/projet/learn_pos.csv' 
+row format delimited fields terminated by '\;' 
+select review from g_learn_pos;
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cluster/user214/projet/learn_neg.csv' 
+row format delimited fields terminated by '\;' 
+select review from g_learn_neg;
+
+
+	# copier le fichier learn_pos.csv dans le répertoire input_p:
+hadoop fs -put /home/cluster/user214/projet/learn_pos.csv/000000_0 /user/user214/input_p/learn_pos.txt
+
+	Job pos reviews:
+hadoop jar /usr/local/hadoop/share/hadoop/tools/lib/hadoop-streaming-2.7.0.jar \
+-input /user/user214/input_p \
+-output /user/user214/output_p18 \
+-mapper /home/cluster/user214/projet/scripts/map.py  \
+-reducer /home/cluster/user214/projet/scripts/red.py
+
+	Reccuperer l'output:
+hadoop fs -get /user/user214/output_p18/part-00000 /home/cluster/user214/projet/output/mtd_pos.csv
+
+	copier le fichier learn_neg.csv dans le répertoire input_p:
+hadoop fs -rm /user/user214/input_p/learn_pos.txt
+hadoop fs -put /home/cluster/user214/projet/learn_neg.csv/000000_0 /user/user214/input_p/learn_neg.txt
+
+	Job neg review:
+hadoop jar /usr/local/hadoop/share/hadoop/tools/lib/hadoop-streaming-2.7.0.jar \
+-input /user/user214/input_p \
+-output /user/user214/output_p19 \
+-mapper /home/cluster/user214/projet/scripts/map.py  \
+-reducer /home/cluster/user214/projet/scripts/red.py
+
+	Reccuperer l'output:
+hadoop fs -get /user/user214/output_p19/part-00000 /home/cluster/user214/projet/output/mtd_neg.csv
+
+
+	# creer les tables des MTD positives et négatives
+
+g_mtd_pos
+g_mtd_neg
+
+CREATE TABLE IF NOT EXISTS g_mtd_pos_temp(
+word STRING,
+freq INT)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\;'
+STORED AS TEXTFILE
+tblproperties ("skip.header.line.count"="1");
+
+LOAD DATA LOCAL INPATH "/home/cluster/user214/projet/output/mtd_pos.csv"
+OVERWRITE INTO TABLE g_mtd_pos_temp;
+
+CREATE TABLE IF NOT EXISTS g_mtd_pos
+AS
+SELECT
+row_number() over () AS id,
+word,
+freq
+FROM g_mtd_pos_temp
+WHERE freq > 1;
+
+drop table g_mtd_pos_temp;
+
+
+
+CREATE TABLE IF NOT EXISTS g_mtd_neg_temp(
+word STRING,
+freq INT)
+ROW FORMAT DELIMITED
+FIELDS TERMINATED BY '\;'
+STORED AS TEXTFILE
+tblproperties ("skip.header.line.count"="1");
+
+LOAD DATA LOCAL INPATH "/home/cluster/user214/projet/output/mtd_neg.csv"
+OVERWRITE INTO TABLE g_mtd_neg_temp;
+
+CREATE TABLE IF NOT EXISTS g_mtd_neg
+AS
+SELECT
+row_number() over () AS id,
+word,
+freq
+FROM g_mtd_neg_temp
+WHERE freq > 1;
+
+drop table g_mtd_neg_temp;
+
+
+	# A partir des deux matrices termes document, création des tables des fréquences d'occurance des termes
+
+g_freq_pos
+g_freq_neg
+g_freq
+
+select sum(freq) from g_mtd_pos; 53635 (nb de mots dans le corpus positif)
+select sum(freq) from g_mtd_neg; 54133 (nb de mots dans le corpus negatif)
+
+CREATE TABLE IF NOT EXISTS g_freq_pos
+AS
+SELECT
+word,
+freq/53635 as freq_pos,
+0 as freq_neg
+FROM g_mtd_pos
+where freq>20;
+
+CREATE TABLE IF NOT EXISTS g_freq_neg
+AS
+SELECT
+word,
+0 as freq_pos,
+freq/54133 as freq_neg
+FROM g_mtd_neg
+where freq>20;
+
+
+	# Création de la table des fréquence positive et negative comme agregar des deux sous tables
+
+CREATE TABLE IF NOT EXISTS g_freq_temp
+AS
+SELECT * FROM g_freq_pos
+UNION
+SELECT * FROM g_freq_neg;
+
+	# sommer les doublons
+
+SELECT
+word,
+sum(freq_pos),
+sum(freq_neg)
+FROM
+g_freq_temp
+GROUP BY word;
+
+CREATE TABLE IF NOT EXISTS g_freq_temp2
+AS
+SELECT
+word,
+sum(freq_pos) as freq_pos,
+sum(freq_neg) as freq_neg
+FROM
+g_freq_temp
+GROUP BY word;
+
+	# labeliser les données
+
+CREATE TABLE IF NOT EXISTS g_freq_temp3
+COMMENT 'labeliser les données'
+AS
+SELECT
+word,
+freq_pos,
+freq_neg,
+CASE 
+WHEN freq_pos > freq_neg
+THEN 'p'
+ELSE 'n'
+END as sent
+FROM
+g_freq_temp2;
+
+	# Calculer la norme du score_D
+
+CREATE TABLE IF NOT EXISTS g_freq_temp4
+COMMENT 'Calculer la distance de chaque point à la première bissectrice'
+AS
+SELECT
+word,
+freq_pos,
+freq_neg,
+sent,
+sqrt(2*(freq_pos-freq_neg)*(freq_pos-freq_neg))/2 as dist
+FROM
+g_freq_temp3;
+
+	# Calculer le Score_D de manière absolu
+
+CREATE TABLE IF NOT EXISTS g_freq_temp5
+COMMENT 'le champ  dist est exprime de facon absolu, negatif si sentiment negatif et positif si sentiment positif'
+AS
+SELECT
+word,
+freq_pos,
+freq_neg,
+sent,
+CASE
+WHEN sent = 'p' THEN dist
+ELSE -dist
+END as dist
+from g_freq_temp4;
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cluster/user214/projet/pos_neg_freq.csv' 
+row format delimited fields terminated by '\t' 
+select freq_pos, freq_neg from g_freq_temp4;
+
+	# Calcul moyenne et ecart type
+
+SELECT
+'a' as a,
+avg(dist),
+stddev(dist)
+FROM g_freq_temp5
+GROUP BY 'a';
+
+
+	# Centrer réduire les données
+
+CREATE TABLE IF NOT EXISTS g_freq_temp6
+COMMENT 'centrer-reduire la variable dist'
+AS
+SELECT
+word,
+freq_pos,
+freq_neg,
+sent,
+dist,
+(dist-1.150354542887493E-5)/6.368304031438812E-4 as dist_cr
+FROM
+g_freq_temp5;
+
+
+	# Prédiction a partir de deux documents, le doc de commentaire labélisé et la liste des mots avec les Score_D
+
+input:
+
+-> mots + dist <vecteur_dist>
+-> "p" + com de test <vecteur_test>
+
+	# extraire les données de hive, les copier sur le cluster pour les traiter en mapreduce
+
+/home/cluster/user214/projet/scripts/mod/vecteur_dist
+/home/cluster/user214/projet/scripts/mod/vecteur_test
+
+
+	# vecteur des distances
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cluster/user214/projet/scripts/mod/vecteur_dist' 
+row format delimited fields terminated by '\t' 
+select word, dist from g_freq_temp5;
+
+
+	# vecteur test
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cluster/user214/projet/scripts/mod/vecteur_test' 
+row format delimited fields terminated by '\t' 
+select sentiment, review from g_test_neg
+union
+select sentiment, review from g_test_pos;
+
+
+	# vecteur learn
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cluster/user214/projet/scripts/mod/vecteur_learn' 
+row format delimited fields terminated by '\t' 
+select sentiment, review from g_learn_neg
+union
+select sentiment, review from g_learn_pos;
+
+
+	# Prediction en apprentissage
+
+hadoop fs -put /home/cluster/user214/projet/scripts/mod/vecteur_learn/learn /user/user214/input_mod_learn
+hadoop fs -put /home/cluster/user214/projet/scripts/mod/vecteur_dist/dist /user/user214/input_mod_learn
+
+hadoop fs -rm -r /user/user214/output_mod
+hadoop fs -rm -r /user/user214/output_mod1
+hadoop fs -rm -r /user/user214/output_mod2
+
+hadoop jar /usr/local/hadoop/share/hadoop/tools/lib/hadoop-streaming-2.7.0.jar \
+-input /user/user214/input_mod_learn \
+-output /user/user214/output_mod1 \
+-mapper /home/cluster/user214/projet/scripts/mod/map1_m.py \
+-reducer /home/cluster/user214/projet/scripts/mod/red1_m.py
+
+hadoop jar /usr/local/hadoop/share/hadoop/tools/lib/hadoop-streaming-2.7.0.jar \
+-input /user/user214/output_mod1 \
+-output /user/user214/output_mod2 \
+-mapper /home/cluster/user214/projet/scripts/mod/map2_m.py \
+-reducer /home/cluster/user214/projet/scripts/mod/red2_m.py
+
+hadoop jar /usr/local/hadoop/share/hadoop/tools/lib/hadoop-streaming-2.7.0.jar \
+-input /user/user214/output_mod2 \
+-output /user/user214/output_mod \
+-mapper /home/cluster/user214/projet/scripts/mod/map3_m.py \
+-reducer /home/cluster/user214/projet/scripts/mod/red3_m.py
+
+hadoop fs -cat output_mod/part-00000
+
+	# Prédiction en test
+
+hadoop fs -put /home/cluster/user214/projet/scripts/mod/vecteur_test/test /user/user214/input_mod_test
+hadoop fs -put /home/cluster/user214/projet/scripts/mod/vecteur_dist/dist /user/user214/input_mod_test
+
+hadoop fs -rm -r /user/user214/output_mod
+hadoop fs -rm -r /user/user214/output_mod1
+hadoop fs -rm -r /user/user214/output_mod2
+
+hadoop jar /usr/local/hadoop/share/hadoop/tools/lib/hadoop-streaming-2.7.0.jar \
+-input /user/user214/input_mod_test \
+-output /user/user214/output_mod1 \
+-mapper /home/cluster/user214/projet/scripts/mod/map1_m.py \
+-reducer /home/cluster/user214/projet/scripts/mod/red1_m.py
+
+hadoop jar /usr/local/hadoop/share/hadoop/tools/lib/hadoop-streaming-2.7.0.jar \
+-input /user/user214/output_mod1 \
+-output /user/user214/output_mod2 \
+-mapper /home/cluster/user214/projet/scripts/mod/map2_m.py \
+-reducer /home/cluster/user214/projet/scripts/mod/red2_m.py
+
+hadoop jar /usr/local/hadoop/share/hadoop/tools/lib/hadoop-streaming-2.7.0.jar \
+-input /user/user214/output_mod2 \
+-output /user/user214/output_mod \
+-mapper /home/cluster/user214/projet/scripts/mod/map3_m.py \
+-reducer /home/cluster/user214/projet/scripts/mod/red3_m.py
+
+hadoop fs -cat output_mod/part-00000
+
+
+
+
+
+# Régression linéaire en mapreduce
+
+input = csv X, Y,
+
+hadoop fs -put /home/cluster/user214/projet/scripts/reg/data_set.csv /user/user214/input_reg
+
+map1.py
+red1.py
+map2.py
+red2.py
+map3.py
+red3.py
+
+hadoop fs -rm -r /user/user214/output_reg|
+hadoop fs -rm -r /user/user214/output_reg1|
+hadoop fs -rm -r /user/user214/output_reg2
+
+hadoop jar /usr/local/hadoop/share/hadoop/tools/lib/hadoop-streaming-2.7.0.jar \
+-input /user/user214/input_reg \
+-output /user/user214/output_reg1 \
+-mapper /home/cluster/user214/projet/scripts/reg/map1.py \
+-reducer /home/cluster/user214/projet/scripts/reg/red1.py|
+
+hadoop jar /usr/local/hadoop/share/hadoop/tools/lib/hadoop-streaming-2.7.0.jar \
+-input /user/user214/output_reg1 \
+-output /user/user214/output_reg2 \
+-mapper /home/cluster/user214/projet/scripts/reg/map2.py  \
+-reducer /home/cluster/user214/projet/scripts/reg/red2.py|
+
+hadoop jar /usr/local/hadoop/share/hadoop/tools/lib/hadoop-streaming-2.7.0.jar \
+-input /user/user214/output_reg2 \
+-output /user/user214/output_reg \
+-mapper /home/cluster/user214/projet/scripts/reg/map3.py  \
+-reducer /home/cluster/user214/projet/scripts/reg/red3.py 
+
+hadoop fs -cat output_reg/part-00000
